@@ -1,0 +1,17 @@
+# Runtime state files (created by PHP)
+public/api/state.json
+public/api/pool-cache.json
+
+# Environment variables
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
