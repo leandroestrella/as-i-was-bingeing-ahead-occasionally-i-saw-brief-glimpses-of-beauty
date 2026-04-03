@@ -28,8 +28,8 @@
   --icon-size-mobile: 2rem;
 
   /* Black frame overlay around the video (see #player-wrap::after) */
-  --frame-bar-x: 5rem;              /* left + right bar thickness */
-  --frame-bar-y: 5rem;              /* top + bottom bar thickness */
+  --frame-bar-x: 0;                               /* left + right bar thickness */
+  --frame-bar-y: calc(var(--icon-size) * 1.85);   /* top + bottom: icon height + 10% */
 
   --border-radius: 0;
   --transition-speed: 0.1s;
@@ -296,10 +296,11 @@ header, footer {
   text-decoration: line-through;
 }
 
-/* Mobile responsiveness: reduce icon size and adjust spacing for small screens */
+/* Mobile: smaller icons, frame bars match icon height */
 @media (max-width: 768px) {
   :root {
     --icon-size: 2rem;
+    --frame-bar-y: calc(var(--icon-size) * 1.8);
   }
 
   #info-panel .inner {

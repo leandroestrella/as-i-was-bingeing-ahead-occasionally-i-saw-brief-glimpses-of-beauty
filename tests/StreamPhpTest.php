@@ -36,7 +36,9 @@ class StreamPhpTest extends TestCase
         '_4NeWUWWoCk',  // morning walk Troyes
     ];
 
-    const SLOT_DURATION = 300;
+    // Must match stream.php SLOT_MIN / SLOT_MAX
+    const SLOT_MIN = 10;
+    const SLOT_MAX = 120;
     const POOL_CACHE_VERSION = '3';
 
     protected function setUp(): void
@@ -87,7 +89,7 @@ class StreamPhpTest extends TestCase
     {
         file_put_contents($this->tmpStateFile, json_encode([
             'startedAt' => time() * 1000,
-            'slotDuration' => self::SLOT_DURATION
+            'slotDuration' => rand(self::SLOT_MIN, self::SLOT_MAX)
         ]));
 
         $state = $this->initializeState();
@@ -106,18 +108,19 @@ class StreamPhpTest extends TestCase
         file_put_contents($this->tmpStateFile, json_encode([
             'videoId' => 'oldVideoId123',
             'startedAt' => $oldTime,
-            'slotDuration' => self::SLOT_DURATION
+            'slotDuration' => rand(self::SLOT_MIN, self::SLOT_MAX)
         ]));
 
         // Elapsed 400s > slot 300s → should advance
         $elapsedSeconds = 400;
-        $this->assertGreaterThanOrEqual(self::SLOT_DURATION, $elapsedSeconds);
+        $this->assertGreaterThanOrEqual(self::SLOT_MAX, $elapsedSeconds);
     }
 
-    public function testSlotDurationWithinBounds()
+    public function testSlotDurationRangeIsValid()
     {
-        $this->assertGreaterThan(0, self::SLOT_DURATION);
-        $this->assertLessThanOrEqual(3600, self::SLOT_DURATION);
+        $this->assertGreaterThan(0, self::SLOT_MIN);
+        $this->assertGreaterThanOrEqual(self::SLOT_MIN, self::SLOT_MAX);
+        $this->assertLessThanOrEqual(3600, self::SLOT_MAX);
     }
 
     // =========================================================================
@@ -191,13 +194,13 @@ class StreamPhpTest extends TestCase
         file_put_contents($this->tmpStateFile, json_encode([
             'videoId' => 'currentVideo123',
             'startedAt' => $currentTime,
-            'slotDuration' => self::SLOT_DURATION
+            'slotDuration' => rand(self::SLOT_MIN, self::SLOT_MAX)
         ]));
 
         // Offset is only 10s (well within slot), but skip=1 should still advance
         $skipRequested = true;
         $elapsedSeconds = 10;
-        $shouldAdvance = $skipRequested || $elapsedSeconds >= self::SLOT_DURATION;
+        $shouldAdvance = $skipRequested || $elapsedSeconds >= self::SLOT_MAX;
 
         $this->assertTrue($shouldAdvance);
     }
@@ -222,7 +225,7 @@ class StreamPhpTest extends TestCase
             $state = [
                 'videoId' => self::FALLBACK_POOL[0],
                 'startedAt' => round(microtime(true) * 1000),
-                'slotDuration' => self::SLOT_DURATION
+                'slotDuration' => rand(self::SLOT_MIN, self::SLOT_MAX)
             ];
             file_put_contents($this->tmpStateFile, json_encode($state));
             return $state;
@@ -235,7 +238,7 @@ class StreamPhpTest extends TestCase
             $state = [
                 'videoId' => self::FALLBACK_POOL[0],
                 'startedAt' => round(microtime(true) * 1000),
-                'slotDuration' => self::SLOT_DURATION
+                'slotDuration' => rand(self::SLOT_MIN, self::SLOT_MAX)
             ];
             file_put_contents($this->tmpStateFile, json_encode($state));
         }

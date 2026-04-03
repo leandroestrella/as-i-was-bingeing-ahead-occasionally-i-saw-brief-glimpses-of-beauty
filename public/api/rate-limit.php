@@ -138,8 +138,6 @@ class RateLimiter {
   }
 
   private static function saveRequestLog($requests) {
-    // LOCK_EX for atomic write (separate from the advisory lock above,
-    // which guards the full read-modify-write cycle)
     @file_put_contents(self::$storageFile, json_encode($requests), LOCK_EX);
   }
 }

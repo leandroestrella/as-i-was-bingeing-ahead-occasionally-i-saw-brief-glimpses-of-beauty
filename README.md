@@ -124,4 +124,5 @@ npm test
 
 ## license
 
-licensed under [apache 2.0](LICENSE). copyright 2025 [leandro estrella](https://leandroestrella.com).
+licensed under [apache 2.0](LICENSE).
+vibe coded by [leandro estrella](https://leandroestrella.com).
