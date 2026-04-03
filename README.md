@@ -2,7 +2,7 @@
 
 a synchronized global video stream artwork inspired by jonas mekas' [5-hour home-movie film](https://en.wikipedia.org/wiki/As_I_Was_Moving_Ahead_Occasionally_I_Saw_Brief_Glimpses_of_Beauty) and the culture of [binge-watching](https://en.wikipedia.org/wiki/Binge-watching). an endless sequence of random youtube videos plays in sequence — like channel-zapping through the intimate and mundane moments captured by strangers around the world. all visitors worldwide see the same video at the same moment.
 
-## how it works
+## how it works?
 
 the server picks a random amateur video every 5 minutes from a pool of ~30 candidates fetched via the invidious api. every client polls the server every 30 seconds and computes the same playback offset from a shared utc timestamp — no websockets, no firebase, no api keys at runtime.
 
@@ -14,28 +14,28 @@ player.seekTo(offset, true)
 ```mermaid
 %%{init: {'theme': 'base', 'flowchart': {'curve': 'stepBefore'}, 'themeVariables': {'primaryColor': '#000', 'primaryTextColor': '#fff', 'primaryBorderColor': '#fff', 'lineColor': '#fff', 'secondaryColor': '#000', 'tertiaryColor': '#000', 'background': '#000', 'mainBkg': '#000', 'nodeBorder': '#fff', 'clusterBkg': '#000', 'clusterBorder': '#fff', 'titleColor': '#fff', 'edgeLabelBackground': '#000'}}}%%
 flowchart TD
-    A[browser loads page] --> B[inject youtube iframe api]
-    B --> C[poll api/stream.php every 30s]
-    C --> D{slot expired?}
-    D -- no --> E[return current state]
-    D -- yes --> F[pick random video from pool]
-    F --> G[write new state.json]
+    A[BROWSER LOADS PAGE] --> B[INJECT YOUTUBE IFRAME API]
+    B --> C[POLL API/STREAM.PHP EVERY 30S]
+    C --> D{SLOT EXPIRED?}
+    D -- NO --> E[RETURN CURRENT STATE]
+    D -- YES --> F[PICK RANDOM VIDEO FROM POOL]
+    F --> G[WRITE NEW STATE.JSON]
     G --> E
-    E --> H{new video?}
-    H -- yes --> I[load video at offset]
-    H -- no --> J{drift > 2s?}
-    J -- yes --> K[seekTo correct offset]
-    J -- no --> L[do nothing]
+    E --> H{NEW VIDEO?}
+    H -- YES --> I[LOAD VIDEO AT OFFSET]
+    H -- NO --> J{DRIFT > 2S?}
+    J -- YES --> K[SEEKTO CORRECT OFFSET]
+    J -- NO --> L[DO NOTHING]
     I --> C
     K --> C
     L --> C
 
-    M[pool.php] --> N{invidious api}
-    N -- success --> O[filter by title / views / channel]
-    N -- fail --> P{youtube rss fallback}
-    P -- fail --> Q[hardcoded fallback pool]
-    O --> R[cache pool for 30 min]
-    P -- success --> O
+    M[POOL.PHP] --> N{INVIDIOUS API}
+    N -- SUCCESS --> O[FILTER BY TITLE / VIEWS / CHANNEL]
+    N -- FAIL --> P{YOUTUBE RSS FALLBACK}
+    P -- FAIL --> Q[HARDCODED FALLBACK POOL]
+    O --> R[CACHE POOL FOR 30 MIN]
+    P -- SUCCESS --> O
     Q --> R
 ```
 
