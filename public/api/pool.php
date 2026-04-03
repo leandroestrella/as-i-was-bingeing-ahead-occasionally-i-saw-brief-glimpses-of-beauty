@@ -9,41 +9,26 @@
  */
 
 // Configuration
-$INVIDIOUS_INSTANCES = [
-  'https://inv.nadeko.net',
-  'https://invidious.io',
-  'https://yt.cdaut.de',
-  'https://invidious.privacydev.net',
-];
-
-$SEARCH_QUERIES = [
-  'home video',
-  'family memories',
-  'everyday life',
-  'street footage',
-  'mundane',
-  'daily life vlog',
-  'found footage',
-  'old home movies',
-  'neighborhood walk',
-  'backyard',
-  'kitchen',
-  'living room',
-  'commute',
-  'market',
-  'children playing',
-  'window view',
-  'rain sounds',
-  'time lapse',
-  'home tour',
-  'morning routine',
-];
-
-$PLAYLIST_IDS = [
-  // These are example playlist IDs — replace with real ones curated for the project
-  'PLDcvjWj6b3hEARyG4CPYuARMbK81vppkd',  // Placeholder
-  'PLkDCHeEfJ0E-8WaVSEWy_SFmfuH9kFfpBZ',  // Placeholder
-];
+function getConfig() {
+  return [
+    'invidious_instances' => [
+      'https://inv.nadeko.net',
+      'https://invidious.io',
+      'https://yt.cdaut.de',
+      'https://invidious.privacydev.net',
+    ],
+    'search_queries' => [
+      'home video', 'family memories', 'everyday life', 'street footage', 'mundane',
+      'daily life vlog', 'found footage', 'old home movies', 'neighborhood walk',
+      'backyard', 'kitchen', 'living room', 'commute', 'market', 'children playing',
+      'window view', 'rain sounds', 'time lapse', 'home tour', 'morning routine',
+    ],
+    'playlist_ids' => [
+      'PLDcvjWj6b3hEARyG4CPYuARMbK81vppkd',
+      'PLkDCHeEfJ0E-8WaVSEWy_SFmfuH9kFfpBZ',
+    ],
+  ];
+}
 
 // Try Invidious first
 $pool = fetchFromInvidious();
@@ -61,13 +46,15 @@ return $pool ?: [];
 // ============================================================================
 
 function fetchFromInvidious() {
-  global $INVIDIOUS_INSTANCES, $SEARCH_QUERIES;
+  $config = getConfig();
+  $instances = $config['invidious_instances'];
+  $queries = $config['search_queries'];
 
   // Pick a random search query
-  $query = $SEARCH_QUERIES[array_rand($SEARCH_QUERIES)];
+  $query = $queries[array_rand($queries)];
 
   // Try each Invidious instance in order
-  foreach ($INVIDIOUS_INSTANCES as $instance) {
+  foreach ($instances as $instance) {
     $url = $instance . '/api/v1/search?q=' . urlencode($query)
       . '&type=video&duration=medium&page=1';
 
@@ -100,11 +87,12 @@ function fetchFromInvidious() {
 }
 
 function fetchFromPlaylistRSS() {
-  global $PLAYLIST_IDS;
+  $config = getConfig();
+  $playlistIds = $config['playlist_ids'];
 
   $allVideos = [];
 
-  foreach ($PLAYLIST_IDS as $playlistId) {
+  foreach ($playlistIds as $playlistId) {
     $url = 'https://www.youtube.com/feeds/videos.xml?playlist_id=' . $playlistId;
     $response = curlGet($url, 5);  // 5 second timeout
 
