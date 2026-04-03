@@ -1,3 +1,12 @@
+# Deploy to cPanel via FTP on every push to master.
+# Only uploads public/ — PHP source, JS, CSS, HTML.
+# Runtime files (state.json, pool-cache, logs) are created by PHP on the server.
+#
+# Required GitHub repository secrets:
+#   FTP_SERVER   — cPanel FTP host (e.g. ftp.example.com)
+#   FTP_USERNAME — cPanel FTP username
+#   FTP_PASSWORD — cPanel FTP password
+
 name: deploy to cpanel
 on:
   push:

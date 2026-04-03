@@ -3,7 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="a synchronized global video stream artwork inspired by jonas mekas">
   <title>as i was bingeing ahead occasionally i saw brief glimpses of beauty</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📹</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@100;300;400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
 </head>
@@ -14,7 +18,7 @@
   </header>
 
   <footer>
-    <a id="sign" title="artist">
+    <a id="sign" href="https://leandroestrella.com" target="_blank" title="author">
       <span class="glitch">le</span>
     </a>
     <a id="expand" title="fullscreen">⬉</a>
@@ -22,9 +26,9 @@
 
   <div id="info-panel">
     <div class="inner">
-      <h1>as i was bingeing ahead occasionally i saw brief glimpses of beauty</h1>
+      <h1>As I Was Bingeing Ahead Occasionally I Saw Brief Glimpses of Beauty</h1>
       <p>
-        inspired by jonas mekas' 5-hour home-movie film, this work streams an endless sequence of random youtube videos—
+        inspired by jonas mekas' <a href="https://en.wikipedia.org/wiki/As_I_Was_Moving_Ahead_Occasionally_I_Saw_Brief_Glimpses_of_Beauty" target="_blank" rel="noopener">5-hour home-movie film</a> and the culture of <a href="https://en.wikipedia.org/wiki/Binge-watching" target="_blank" rel="noopener">binge-watching</a>, this work streams an endless sequence of random youtube videos—
         like channel-zapping through the intimate and mundane moments captured by strangers around the world.
       </p>
       <p>
@@ -36,7 +40,7 @@
     </div>
   </div>
 
-  <div id="gate">tap to watch</div>
+  <button id="gate" class="hidden">tap to watch</button>
   <div id="player-wrap">
     <div id="player"></div>
   </div>

@@ -1,63 +1,87 @@
+/**
+ * Bingeing Ahead — Client-side stream synchronization
+ *
+ * All visitors worldwide see the same video at the same playback position.
+ * The server (stream.php) provides a shared state { videoId, startedAt, slotDuration }.
+ * This script polls that state and computes the playback offset locally:
+ *
+ *   offset = (Date.now() - startedAt) / 1000
+ *
+ * No WebSockets or Firebase — just periodic polling + math.
+ */
 (function () {
   'use strict';
 
-  const POLL_INTERVAL = 30_000;        // ms between sync checks
-  const SYNC_THRESHOLD = 2;            // seconds of drift before re-seek
-  const YOUTUBE_API_READY_TIMEOUT = 10_000; // ms to wait for YouTube API
+  // --- Configuration ---------------------------------------------------------
+  // These values are trade-offs between responsiveness and server load.
+
+  const POLL_INTERVAL = 30_000;  // How often to check the server (ms).
+                                 // 30s keeps load low while catching slot changes quickly.
+
+  const SYNC_THRESHOLD = 2;      // Maximum acceptable drift (seconds) before re-seeking.
+                                 // YouTube's player has ~1-2s natural jitter, so seeking
+                                 // for less than 2s causes more jank than it fixes.
+
+  const API_TIMEOUT = 5_000;     // Abort fetch if server doesn't respond within 5s.
 
   let player;
-  let currentVideoId = null;
-  let isGateOpen = false;
 
-  // ============================================================================
-  // PHASE 1: Load YouTube IFrame API
-  // ============================================================================
+  // ===========================================================================
+  // YouTube API injection
+  // ===========================================================================
 
+  /**
+   * Load the YouTube IFrame API and wait for it to be ready.
+   *
+   * YouTube provides a callback (window.onYouTubeIframeAPIReady) but it's
+   * unreliable when the script is injected dynamically. Polling for
+   * window.YT.Player at 100ms intervals is more robust.
+   */
   function injectYouTubeAPI() {
     return new Promise((resolve) => {
+      if (window.YT && window.YT.Player) {
+        resolve();
+        return;
+      }
+
       const tag = document.createElement('script');
       tag.src = 'https://www.youtube.com/iframe_api';
       tag.async = true;
-
-      tag.onload = () => {
-        // Wait for global onYouTubeIframeAPIReady to be called
-        const waitForReady = setInterval(() => {
-          if (window.YT && window.YT.Player) {
-            clearInterval(waitForReady);
-            resolve();
-          }
-        }, 100);
-
-        // Timeout in case YouTube takes too long
-        setTimeout(() => {
-          clearInterval(waitForReady);
-          resolve();
-        }, YOUTUBE_API_READY_TIMEOUT);
-      };
-
       document.body.appendChild(tag);
+
+      const checkReady = () => {
+        if (window.YT && window.YT.Player) {
+          resolve();
+        } else {
+          setTimeout(checkReady, 100);
+        }
+      };
+      checkReady();
     });
   }
 
-  window.onYouTubeIframeAPIReady = function () {
-    // Called by YouTube API when ready
-  };
+  // ===========================================================================
+  // Player initialization
+  // ===========================================================================
 
-  // ============================================================================
-  // PHASE 2: Initialize YouTube Player
-  // ============================================================================
-
+  /**
+   * Create the YouTube IFrame player with all UI stripped.
+   * playerVars reference: https://developers.google.com/youtube/player_api#Parameters
+   */
   function initPlayer() {
     player = new YT.Player('player', {
       playerVars: {
         autoplay: 1,
-        controls: 0,
-        modestbranding: 1,
-        playsinline: 1,
-        iv_load_policy: 3,  // Hide annotations
-        disablekb: 1,       // Disable keyboard
-        rel: 0,             // No related videos
-        fs: 0               // No fullscreen button
+        controls: 0,           // hide play/pause bar
+        modestbranding: 1,     // minimize YouTube logo
+        showinfo: 0,           // hide video title overlay
+        playsinline: 1,        // iOS: play inline instead of fullscreen
+        iv_load_policy: 3,     // hide video annotations
+        disablekb: 1,          // disable keyboard shortcuts (space = pause, etc.)
+        rel: 0,                // don't show related videos when video ends
+        fs: 0,                 // hide fullscreen button
+        cc_load_policy: 0,     // don't auto-show closed captions
+        origin: location.origin
       },
       events: {
         onReady: onPlayerReady,
@@ -68,138 +92,126 @@
   }
 
   function onPlayerReady() {
-    // Open the gate for desktop (no gesture required)
-    // Mobile will show tap-to-start overlay
-    if (shouldShowGate()) {
-      // Gate will remain visible, waiting for tap
-    } else {
-      openGate();
-    }
-
-    // Start polling for stream state updates
     fetchState();
     setInterval(fetchState, POLL_INTERVAL);
   }
 
-  function shouldShowGate() {
-    // Show gate on all platforms (safer for YouTube autoplay policies)
-    return true;
-  }
+  // ===========================================================================
+  // Stream synchronization
+  // ===========================================================================
 
-  function openGate() {
-    const gate = document.getElementById('gate');
-    if (gate && !isGateOpen) {
-      gate.classList.add('hidden');
-      isGateOpen = true;
-      player.playVideo();
-    }
-  }
-
-  // ============================================================================
-  // PHASE 3: Poll stream state
-  // ============================================================================
-
+  /**
+   * Poll the server for the current stream state.
+   * On failure, do nothing — the player keeps playing the current video
+   * and will re-sync on the next successful poll.
+   */
   function fetchState() {
-    fetch('api/stream.php')
+    fetch('api/stream.php', { signal: AbortSignal.timeout(API_TIMEOUT) })
       .then((response) => {
-        if (!response.ok) throw new Error('Stream fetch failed');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.json();
       })
       .then((state) => {
         syncToState(state);
       })
       .catch((error) => {
-        console.error('[stream.php]', error);
+        console.warn('[stream sync error]', error.message);
       });
   }
 
-  // ============================================================================
-  // PHASE 4: Sync player to stream state
-  // ============================================================================
-
+  /**
+   * Align the player with the server state.
+   *
+   * Three outcomes:
+   *   1. Slot expired → do nothing, server will advance on next poll
+   *   2. New video    → load it at the computed offset
+   *   3. Same video   → check drift, re-seek only if > SYNC_THRESHOLD
+   */
   function syncToState(state) {
-    if (!state || !state.videoId) return;
-
-    // Compute current playback offset based on server-side clock
-    const offset = (Date.now() - state.startedAt) / 1000;
-
-    // If we're past the slot duration, wait for next poll (server will advance)
-    if (offset >= state.slotDuration) {
+    if (!state || typeof state.videoId !== 'string' || !state.startedAt) {
       return;
     }
 
-    // If this is a different video, load it
-    const currentId = player.getVideoData?.call(player)?.video_id;
-    if (currentId !== state.videoId) {
-      currentVideoId = state.videoId;
+    // This is the core sync formula — same math on every client
+    const offset = (Date.now() - state.startedAt) / 1000;
+
+    if (offset >= state.slotDuration) {
+      return; // slot expired; server will pick a new video on next poll
+    }
+
+    // getVideoData() can be undefined while the player is still initializing
+    const currentVideoId = player.getVideoData?.()?.video_id;
+
+    if (!currentVideoId || currentVideoId !== state.videoId) {
+      // New video — load it, starting at the current offset so we're in sync
+      // floor() avoids seeking past a frame boundary on short videos
       player.loadVideoById({
         videoId: state.videoId,
         startSeconds: Math.floor(offset)
       });
     } else {
-      // Same video — check for drift and re-sync if needed
-      const playerTime = player.getCurrentTime?.call(player) || 0;
-      if (Math.abs(playerTime - offset) > SYNC_THRESHOLD) {
+      // Same video — correct drift if it's grown too large
+      const playerTime = player.getCurrentTime();
+      const drift = Math.abs(playerTime - offset);
+
+      if (drift > SYNC_THRESHOLD) {
+        // true = allow seeking ahead (buffers new data if needed)
         player.seekTo(offset, true);
       }
     }
   }
 
-  // ============================================================================
-  // PHASE 5: Player state change handler
-  // ============================================================================
+  // ===========================================================================
+  // Player state handling
+  // ===========================================================================
 
   function onStateChange(event) {
-    const playerState = event.data;
+    const state = event.data;
 
-    // Never allow paused state — force resume
-    if (playerState === YT.PlayerState.PAUSED) {
+    // Never allow pausing — this is a continuous stream
+    if (state === YT.PlayerState.PAUSED) {
       player.playVideo();
     }
 
-    // If video ended, wait for next poll to advance
-    if (playerState === YT.PlayerState.ENDED) {
-      // Do nothing; server will advance on next interval
-    }
-
-    // If error, immediately fetch new stream state
-    if (playerState === YT.PlayerState.UNSTARTED) {
-      // Common for errors
+    // If the video is shorter than its slot, skip immediately
+    // rather than sitting on a black screen until the next poll
+    if (state === YT.PlayerState.ENDED) {
+      skipToNextVideo();
     }
   }
 
+  /**
+   * Handle YouTube player errors.
+   * Common codes: 101/150 = not embeddable, 100 = deleted, 5 = HTML5 error.
+   * In all cases, tell the server to advance to the next video.
+   */
   function onPlayerError(event) {
-    // Error codes: 2 (invalid param), 5 (HTML5 error), 100 (not found),
-    // 101 (not allowed to embed), 150 (same as 101)
-    console.error('[player error]', event.data);
-
-    // Unembeddable or not available — skip to next video
+    console.warn('[player error]', event.data);
     skipToNextVideo();
   }
 
+  /** Ask the server to advance to the next video via ?skip=1. */
   function skipToNextVideo() {
-    fetch('api/stream.php?skip=1', { method: 'GET' })
-      .then((response) => response.json())
+    fetch('api/stream.php?skip=1', { signal: AbortSignal.timeout(API_TIMEOUT) })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      })
       .then((state) => {
         syncToState(state);
       })
       .catch((error) => {
-        console.error('[skip]', error);
+        console.warn('[skip error]', error.message);
       });
   }
 
-  // ============================================================================
-  // PHASE 6: UI Interactions
-  // ============================================================================
+  // ===========================================================================
+  // UI setup
+  // ===========================================================================
 
+  /** Wire up the four corner UI elements and the info panel overlay. */
   function setupUI() {
-    // Gate: tap to start
-    const gate = document.getElementById('gate');
-    if (gate) {
-      gate.addEventListener('click', openGate);
-    }
-
-    // Info panel toggle
+    // Info panel toggle (top-right ℹ icon)
     const infoBtn = document.getElementById('info');
     const infoPanel = document.getElementById('info-panel');
     if (infoBtn && infoPanel) {
@@ -207,6 +219,7 @@
         e.stopPropagation();
         infoPanel.classList.toggle('show');
       });
+      // Clicking the dark overlay (but not the text) closes the panel
       infoPanel.addEventListener('click', (e) => {
         if (e.target === infoPanel) {
           infoPanel.classList.remove('show');
@@ -214,21 +227,19 @@
       });
     }
 
-    // Fullscreen toggle
+    // Fullscreen toggle (bottom-right ⬉ icon)
     const expandBtn = document.getElementById('expand');
     if (expandBtn) {
       expandBtn.addEventListener('click', () => {
         if (!document.fullscreenElement) {
-          document.documentElement.requestFullscreen?.().catch(() => {
-            // Fullscreen not available or denied
-          });
+          document.documentElement.requestFullscreen?.().catch(() => {});
         } else {
           document.exitFullscreen?.();
         }
       });
     }
 
-    // Reload
+    // Page reload (top-left ↺ icon)
     const reloadBtn = document.getElementById('reload');
     if (reloadBtn) {
       reloadBtn.addEventListener('click', () => {
@@ -236,16 +247,12 @@
       });
     }
 
-    // Glitch animation data attribute (for pseudo-elements)
-    const glitch = document.querySelector('.glitch');
-    if (glitch) {
-      glitch.setAttribute('data-text', glitch.textContent);
-    }
+    // Glitch effect on "le" signature is CSS-only (hover-triggered pseudo-elements)
   }
 
-  // ============================================================================
-  // PHASE 7: Bootstrap
-  // ============================================================================
+  // ===========================================================================
+  // Bootstrap
+  // ===========================================================================
 
   async function bootstrap() {
     try {
@@ -257,7 +264,6 @@
     }
   }
 
-  // Start when DOM is ready
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', bootstrap);
   } else {

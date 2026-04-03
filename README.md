@@ -1,165 +1,127 @@
-# as i was bingeing ahead occasionally i saw brief glimpses of beauty
+# As I Was Bingeing Ahead Occasionally I Saw Brief Glimpses of Beauty
 
-A synchronized global video stream artwork inspired by Jonas Mekas' 5-hour home-movie film. An endless sequence of random YouTube videos plays in sequence — like channel-zapping — across all devices worldwide. All visitors see the exact same video at the exact same playback position.
+a synchronized global video stream artwork inspired by jonas mekas' [5-hour home-movie film](https://en.wikipedia.org/wiki/As_I_Was_Moving_Ahead_Occasionally_I_Saw_Brief_Glimpses_of_Beauty) and the culture of [binge-watching](https://en.wikipedia.org/wiki/Binge-watching). an endless sequence of random youtube videos plays in sequence — like channel-zapping through the intimate and mundane moments captured by strangers around the world. all visitors worldwide see the same video at the same moment.
 
-## Architecture
+## how it works
 
-- **Hybrid video pool** — Fetches from Invidious API (primary) with YouTube playlist RSS fallback
-- **PHP state manager** — Fixed-slot playback (5 min default) synchronized via server-side timestamps
-- **Vanilla JS frontend** — YouTube IFrame API player with drift correction (±2 seconds)
-- **House style** — Black background, Roboto font, glitch animation signature (matching stime.leandroestrella.com and assistedselfportrait.leandroestrella.com)
-- **Deployment** — GitHub Actions pushes to cPanel via FTP
-
-## Sync Mechanism
-
-All clients compute the same playback offset using a simple formula:
+the server picks a random amateur video every 5 minutes from a pool of ~30 candidates fetched via the invidious api. every client polls the server every 30 seconds and computes the same playback offset from a shared utc timestamp — no websockets, no firebase, no api keys at runtime.
 
 ```
 offset = (Date.now() - startedAt) / 1000
 player.seekTo(offset, true)
 ```
 
-`startedAt` is a UTC Unix millisecond timestamp written by the server. No WebSockets, Firebase, or external dependencies needed.
+```mermaid
+%%{init: {'theme': 'base', 'flowchart': {'curve': 'stepBefore'}, 'themeVariables': {'primaryColor': '#000', 'primaryTextColor': '#fff', 'primaryBorderColor': '#fff', 'lineColor': '#fff', 'secondaryColor': '#000', 'tertiaryColor': '#000', 'background': '#000', 'mainBkg': '#000', 'nodeBorder': '#fff', 'clusterBkg': '#000', 'clusterBorder': '#fff', 'titleColor': '#fff', 'edgeLabelBackground': '#000'}}}%%
+flowchart TD
+    A[browser loads page] --> B[inject youtube iframe api]
+    B --> C[poll api/stream.php every 30s]
+    C --> D{slot expired?}
+    D -- no --> E[return current state]
+    D -- yes --> F[pick random video from pool]
+    F --> G[write new state.json]
+    G --> E
+    E --> H{new video?}
+    H -- yes --> I[load video at offset]
+    H -- no --> J{drift > 2s?}
+    J -- yes --> K[seekTo correct offset]
+    J -- no --> L[do nothing]
+    I --> C
+    K --> C
+    L --> C
 
-## Project Structure
+    M[pool.php] --> N{invidious api}
+    N -- success --> O[filter by title / views / channel]
+    N -- fail --> P{youtube rss fallback}
+    P -- fail --> Q[hardcoded fallback pool]
+    O --> R[cache pool for 30 min]
+    P -- success --> O
+    Q --> R
+```
+
+## video curation
+
+videos are sourced using the [img_0001 approach](https://walzr.com/IMG_0001) — searching for default camera filenames (`IMG_0001`, `VID_20230`, `MOV_0001`) to find genuinely amateur uploads. results are sorted by upload date (not relevance) to avoid seo-optimized content, and filtered through a multi-signal pipeline:
+
+- **title blocklist** — 50+ terms across music, education, gaming, commercial, news, fitness, tech, and ambient categories
+- **channel blocklist** — filters professional/corporate channel names (news, media, official, studios, etc.)
+- **view count ceiling** — excludes videos with >50,000 views to favor genuine amateur content
+- **invidious api** — `sort_by=upload_date`, `duration=medium`, pages 1-5 randomized
+
+all filters and thresholds are centralized in `pool.php → getConfig()` for easy tuning.
+
+## project structure
 
 ```
-bingeing-ahead/
-├── .github/
-│   └── workflows/
-│       └── deploy.yml              # GitHub Actions: push master → FTP deploy public/
-├── .gitignore
-├── README.md
-└── public/
-    ├── index.html                  # Minimal shell with iOS gate
-    ├── css/
-    │   └── style.css               # House style
-    ├── js/
-    │   └── app.js                  # YouTube IFrame + stream polling
-    └── api/
-        ├── .htaccess               # Protect .json from direct access
-        ├── stream.php              # Stream state manager
-        └── pool.php                # Video pool fetcher (Invidious + RSS)
+public/
+├── index.html              # minimal shell
+├── css/style.css           # house style (black, roboto, glitch animation)
+├── js/app.js               # youtube iframe + stream polling
+└── api/
+    ├── stream.php           # state manager (file-locked, rate-limited)
+    ├── pool.php             # video fetcher (invidious + rss + filters)
+    ├── utils.php            # shared utilities (ip detection)
+    ├── perf.php             # performance logging
+    ├── rate-limit.php       # ip-based rate limiting
+    └── .htaccess            # block direct .json access
 ```
 
-Runtime files (created by PHP, gitignored):
-- `public/api/state.json` — current stream state
-- `public/api/pool-cache.json` — cached video pool
+runtime files (gitignored): `state.json`, `pool-cache.v*.json`, `logs/`
 
-## Deployment
+## deployment
 
-### 1. Set up cPanel FTP credentials
-
-Add GitHub repository secrets:
-- `FTP_SERVER` — your cPanel FTP server (e.g., `ftp.example.com`)
-- `FTP_USERNAME` — cPanel FTP username
-- `FTP_PASSWORD` — cPanel FTP password
-
-### 2. Push to master branch
+push to `master` triggers github actions → ftp deploy `public/` to cpanel. requires repository secrets: `FTP_SERVER`, `FTP_USERNAME`, `FTP_PASSWORD`.
 
 ```bash
 git push origin master
 ```
 
-GitHub Actions will automatically deploy the `public/` directory to your cPanel server via FTP.
+verify: visit `api/stream.php` directly — should return `{ videoId, startedAt, slotDuration }`. open in two tabs — both should show the same video at the same position.
 
-### 3. Verify deployment
+## configuration
 
-- Visit your deployed URL in a browser
-- Check `api/stream.php` directly — should return a JSON object with `videoId`, `startedAt`, and `slotDuration`
-- Open in two tabs — both should sync to the same video/offset
+all tunable values live in two files:
 
-## Configuration
+| setting | file | default |
+|---|---|---|
+| slot duration | `stream.php` → `SLOT_DURATION` | 300s (5 min) |
+| cache version | `stream.php` → `POOL_CACHE_VERSION` | `'3'` |
+| rate limit | `stream.php` → `RateLimiter::configure()` | 100 req/min/ip |
+| pool size | `pool.php` → `getConfig()` → `pool_size` | 30 videos |
+| view count ceiling | `pool.php` → `getConfig()` → `max_view_count` | 50,000 |
+| search queries | `pool.php` → `getConfig()` → `search_queries` | ~45 queries |
+| title blocklist | `pool.php` → `getConfig()` → `title_blocklist` | 50+ terms |
+| channel blocklist | `pool.php` → `getConfig()` → `channel_blocklist` | 8 terms |
+| invidious instances | `pool.php` → `getConfig()` → `invidious_instances` | 7 instances |
 
-### Video slot duration
+## technical notes
 
-Edit `public/api/stream.php`, line ~11:
+- **zero youtube api quotas** — invidious api, youtube rss feeds, and youtube iframe player api are all free
+- **file-locked state** — `flock()` prevents race conditions on `state.json` under concurrent requests
+- **rate-limited** — ip-based request limiting with file locking to prevent toctou races
+- **clock skew** — utc timestamps; typical skew < 1s across devices, acceptable for an art piece
+- **ios autoplay** — requires user gesture; a tap-to-start gate is available in the html
 
-```php
-define('SLOT_DURATION', 300);  // seconds (5 minutes)
+## testing
+
+```bash
+# php
+composer install --dev
+vendor/bin/phpunit
+
+# javascript
+npm install --save-dev jest babel-jest
+npm test
 ```
 
-### Search queries (for Invidious)
+## troubleshooting
 
-Edit `public/api/pool.php`, lines ~18–34, the `$SEARCH_QUERIES` array. The pool fetcher randomly picks one query per refresh.
+| problem | fix |
+|---|---|
+| `stream.php` returns error | ensure `public/api/` is writable (755 for dirs, 644 for files) |
+| only fallback videos | invidious instances may be down; check `logs/perf.log` |
+| videos not syncing | verify `api/stream.php` returns json; check browser console |
 
-### Fallback playlist IDs
+## license
 
-Edit `public/api/pool.php`, lines ~36–40, the `$PLAYLIST_IDS` array. Get playlist IDs from YouTube URLs:
-```
-https://www.youtube.com/watch?v=VIDEO&list=PLAYLIST_ID
-                                            ^^^^^^^^^^^^ copy this
-```
-
-## How It Works
-
-### On first load
-
-1. Browser loads `index.html`, injects YouTube IFrame API, shows tap-to-start gate
-2. Client calls `api/stream.php`, gets current state or bootstraps if empty
-3. `stream.php` reads `state.json` (or creates it if missing)
-4. `pool.php` fetches ~30 video IDs from Invidious or YouTube RSS
-5. Client loads first video via YouTube IFrame Player API
-
-### Every 30 seconds
-
-1. Client polls `api/stream.php`
-2. `stream.php` checks: has the current slot expired?
-   - If no: return current state
-   - If yes: pick a random video from pool, write new state, return it
-3. Client syncs to current video/offset via `player.seekTo(offset, true)`
-
-### On video error
-
-If YouTube reports error 101/150 (not embeddable), client calls `stream.php?skip=1` to force advance to next video.
-
-## Technical Notes
-
-### Clock Skew
-
-UTC Unix timestamps are used. Typical clock skew between devices is < 1 second. For an art piece, this is acceptable. No NTP correction needed.
-
-### Single-instance server
-
-The PHP state file is write-locked to prevent race conditions. If you deploy to a multi-instance load balancer, only one instance should run `stream.php`. For cPanel shared hosting, this is not a concern.
-
-### YouTube API quotas
-
-This project uses **zero** YouTube Data API quotas at runtime:
-- Invidious API is free and unrestricted
-- YouTube RSS feeds are free
-- YouTube IFrame Player API is free
-
-Video selection is dynamic and requires no API calls once the pool is fetched.
-
-### iOS autoplay
-
-iOS Safari requires a user gesture to start autoplay. A full-screen tap-to-start gate is shown on all platforms for simplicity and policy compliance.
-
-## Troubleshooting
-
-### `stream.php` returns error
-
-Check that `public/api/` is writable by the web server (Apache/LiteSpeed on cPanel). PHP needs write permission to create `state.json` and `pool-cache.json`.
-
-**cPanel solution:** Use File Manager → Set permissions to 755 for directories, 644 for files. Or contact hosting support.
-
-### Videos not loading / only fallback videos show
-
-Invidious instances may be down or rate-limiting. Check if the instances in `pool.php` are accessible. The fallback hardcoded pool will be used automatically.
-
-### Videos not syncing across devices
-
-Check browser console for errors. Verify `api/stream.php` returns JSON when visited directly. Ensure `php.ini` `allow_url_fopen` is enabled (needed for `fopen()` in `pool.php`).
-
-### YouTube IFrame shows controls
-
-Edit `public/js/app.js`, `playerVars`: set `controls: 0` to hide controls. Default is already hidden.
-
-## License
-
-This work is an artwork inspired by Jonas Mekas' "As I Was Moving Ahead Occasionally I Saw Brief Glimpses of Beauty" (1983).
-
-## Contact
-
-Created by Leandro Estrella.
+licensed under [apache 2.0](LICENSE). copyright 2025 [leandro estrella](https://leandroestrella.com).

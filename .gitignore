@@ -1,16 +1,22 @@
-# Runtime state files (created by PHP)
+# Runtime files created by PHP on the server
 public/api/state.json
-public/api/pool-cache.json
+public/api/state.lock
+public/api/pool-cache*.json   # versioned caches (pool-cache.v3.json etc.)
+logs/                          # perf.log, rate-limit.json
+
+# Dependencies (installed locally, not committed)
+node_modules/
+vendor/
 
 # Environment variables
 .env
 .env.local
 
-# OS
+# OS artifacts
 .DS_Store
 Thumbs.db
 
-# IDE
+# IDE / editor
 .vscode/
 .idea/
 *.swp

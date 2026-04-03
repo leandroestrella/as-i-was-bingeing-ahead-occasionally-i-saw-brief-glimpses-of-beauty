@@ -1,3 +1,40 @@
+/**
+ * Bingeing Ahead — Global Styles
+ *
+ * House style shared across leandroestrella.com projects:
+ *   - stime.leandroestrella.com
+ *   - assistedselfportrait.leandroestrella.com
+ *
+ * Design: black background, white Roboto text, lowercase everything,
+ * four corner icons with line-through hover, glitch animation on "le" signature.
+ */
+
+/* Design tokens — change these to restyle the entire piece */
+:root {
+  /* Colors */
+  --color-bg: #000;
+  --color-text: #fff;
+  --color-text-muted: #aaa;
+  --color-overlay-dark: rgba(0, 0, 0, 0.85);   /* info panel backdrop */
+  --color-overlay-darker: rgba(0, 0, 0, 0.95);  /* autoplay gate backdrop */
+
+  /* Layout */
+  --spacing-corner: 1rem;            /* how far corner icons sit from viewport edges */
+  --spacing-info-title: 1.5rem;
+  --spacing-info-paragraph: 1rem;
+
+  /* Icons */
+  --icon-size: 3rem;
+  --icon-size-mobile: 2rem;
+
+  /* Black frame overlay around the video (see #player-wrap::after) */
+  --frame-bar-x: 5rem;              /* left + right bar thickness */
+  --frame-bar-y: 5rem;              /* top + bottom bar thickness */
+
+  --border-radius: 0;
+  --transition-speed: 0.1s;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -7,8 +44,8 @@ html, body {
   height: 100%;
   margin: 0;
   padding: 0;
-  background: #000;
-  color: #fff;
+  background: var(--color-bg);
+  color: var(--color-text);
   font-family: Roboto, sans-serif;
   font-weight: 400;
   font-size: 16px;
@@ -17,73 +54,73 @@ html, body {
   overflow: hidden;
 }
 
-/* Scrollbar styling */
+/* Scrollbar: minimal design matching house style */
 ::-webkit-scrollbar {
   width: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #000;
+  background: var(--color-bg);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #fff;
+  background: var(--color-text);
 }
 
-/* Header and footer corner icons */
+/* Header/footer use display:contents so they don't create a layout box —
+   their children (#reload, #info, #sign, #expand) are positioned individually
+   via position:fixed, as if header/footer didn't exist in the DOM. */
 header, footer {
+  display: contents;
+}
+
+/* Corner icons: fixed viewport positioning in each corner */
+#reload, #info, #sign, #expand {
   position: fixed;
-  display: flex;
-  gap: 1rem;
-  z-index: 999;
-}
-
-header {
-  top: 1rem;
-  left: 1rem;
-  flex-direction: column;
-}
-
-footer {
-  bottom: 1rem;
-  flex-direction: column;
-  align-items: flex-start;
-}
-
-footer {
-  left: 1rem;
-}
-
-header a:nth-child(2),
-footer a:nth-child(1) {
-  order: 2;
-}
-
-header a,
-footer a {
-  color: #fff;
-  font-size: 3rem;
+  color: var(--color-text);
+  font-size: var(--icon-size);
   cursor: pointer;
   text-decoration: none;
   user-select: none;
-  transition: text-decoration 0.1s;
+  transition: text-decoration var(--transition-speed);
   line-height: 1;
-  overflow: visible;
+  z-index: 999;
 }
 
-header a:hover,
-footer a:hover {
+/* Reload icon: top-left */
+#reload {
+  top: var(--spacing-corner);
+  left: var(--spacing-corner);
+}
+
+/* Info icon: top-right */
+#info {
+  top: var(--spacing-corner);
+  right: var(--spacing-corner);
+}
+
+/* Artist signature: bottom-left */
+#sign {
+  bottom: var(--spacing-corner);
+  left: var(--spacing-corner);
+}
+
+/* Expand/fullscreen icon: bottom-right */
+#expand {
+  bottom: var(--spacing-corner);
+  right: var(--spacing-corner);
+}
+
+/* Icon hover state: line-through for visual feedback */
+#reload:hover, #info:hover, #sign:hover, #expand:hover {
   text-decoration: line-through;
 }
 
-/* Info panel overlay */
+/* Info panel: modal overlay showing project description */
 #info-panel {
   position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0, 0, 0, 0.85);
+  inset: 0;
+  background: var(--color-overlay-dark);
   z-index: 998;
   display: none;
   align-items: center;
@@ -96,6 +133,7 @@ footer a:hover {
   display: flex;
 }
 
+/* Info panel content: centered box with max width */
 #info-panel .inner {
   max-width: 500px;
   text-align: justify;
@@ -105,22 +143,25 @@ footer a:hover {
 #info-panel h1 {
   font-size: 1.2rem;
   font-weight: 300;
-  margin: 0 0 1.5rem 0;
+  margin: 0 0 var(--spacing-info-title) 0;
   line-height: 1.4;
 }
 
 #info-panel p {
-  margin: 1rem 0;
+  margin: var(--spacing-info-paragraph) 0;
   font-weight: 100;
 }
 
-/* Player wrapper — full viewport */
+#info-panel p:last-child {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  margin-top: 2rem;
+}
+
+/* Player container: full viewport, behind all UI elements */
 #player-wrap {
   position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
+  inset: 0;
   z-index: 0;
 }
 
@@ -129,6 +170,22 @@ footer a:hover {
   height: 100%;
 }
 
+/* Black frame overlay: border around the video masking YouTube UI remnants.
+   --frame-bar-x controls left/right thickness, --frame-bar-y controls top/bottom. */
+#player-wrap::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  border-style: solid;
+  border-color: var(--color-bg);
+  border-width: var(--frame-bar-y) var(--frame-bar-x);
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* YouTube iframe: fullscreen video with pointer-events disabled
+   (click-through to prevent accidental pause; controls are already hidden
+   via playerVars.controls=0 in app.js) */
 #player iframe {
   width: 100%;
   height: 100%;
@@ -136,14 +193,15 @@ footer a:hover {
   pointer-events: none;
 }
 
-/* iOS autoplay gate */
+/* Autoplay gate: overlay requiring tap-to-play (iOS policy compliance)
+   Hidden by default since gate is already marked hidden in HTML.
+   Styled as a button for accessibility but rendered without default button chrome. */
 #gate {
+  appearance: none;
+  border: none;
   position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0, 0, 0, 0.95);
+  inset: 0;
+  background: var(--color-overlay-darker);
   z-index: 1000;
   display: flex;
   align-items: center;
@@ -152,90 +210,96 @@ footer a:hover {
   user-select: none;
   font-size: 2rem;
   font-weight: 100;
-  color: #fff;
+  color: var(--color-text);
 }
 
 #gate.hidden {
   display: none;
 }
 
-/* Glitch animation for artist signature */
+/* Glitch animation — exact copy from assisted_self-portrait.
+   Two pseudo-elements ("le" in red and blue) are hidden by default.
+   On #sign:hover they appear with offset positions and clip-path
+   keyframes that randomly mask portions of the text, creating a
+   chromatic aberration / VHS tracking error effect.
+   The animation runs at 2s with alternate-reverse for a slow, unhurried flicker. */
 .glitch {
+  font-family: sans-serif;
   position: relative;
-  display: inline-block;
 }
 
 .glitch::before,
 .glitch::after {
-  content: attr(data-text);
+  content: "le";
+  color: var(--color-text);
   position: absolute;
-  left: 0;
   top: 0;
+  left: 0;
   width: 100%;
   height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+  display: none;
 }
 
-.glitch::before {
-  animation: glitch-1 0.3s infinite;
-  color: #ff0099;
-  z-index: -1;
-  text-shadow: -2px 0 #ff0099;
+#sign:hover .glitch::before {
+  display: block;
+  left: 3px;
+  text-shadow: -2px 0 red;
+  animation: glitch-1 2s linear infinite alternate-reverse;
 }
 
-.glitch::after {
-  animation: glitch-2 0.3s infinite;
-  color: #00ffff;
-  z-index: -2;
-  text-shadow: 2px 0 #00ffff;
+#sign:hover .glitch::after {
+  display: block;
+  left: -3px;
+  text-shadow: -2px 0 blue;
+  animation: glitch-2 2s linear infinite alternate-reverse;
 }
 
 @keyframes glitch-1 {
-  0% {
-    clip-path: inset(40% 0 61% 0);
-  }
-  20% {
-    clip-path: inset(92% 0 1% 0);
-  }
-  40% {
-    clip-path: inset(43% 0 1% 0);
-  }
-  60% {
-    clip-path: inset(25% 0 58% 0);
-  }
-  80% {
-    clip-path: inset(54% 0 7% 0);
-  }
-  100% {
-    clip-path: inset(58% 0 43% 0);
-  }
+  0%   { clip-path: inset(92% 0 0 0); }
+  10%  { clip-path: inset(80% 0 2% 0); }
+  20%  { clip-path: inset(6% 0 47% 0); }
+  30%  { clip-path: inset(40% 0 55% 0); }
+  40%  { clip-path: inset(20% 0 82% 0); }
+  50%  { clip-path: inset(58% 0 5% 0); }
+  60%  { clip-path: inset(83% 0 32% 0); }
+  70%  { clip-path: inset(87% 0 48% 0); }
+  80%  { clip-path: inset(19% 0 14% 0); }
+  90%  { clip-path: inset(20% 0 59% 0); }
+  100% { clip-path: inset(54% 0 22% 0); }
 }
 
 @keyframes glitch-2 {
-  0% {
-    clip-path: inset(61% 0 40% 0);
-  }
-  20% {
-    clip-path: inset(1% 0 92% 0);
-  }
-  40% {
-    clip-path: inset(1% 0 43% 0);
-  }
-  60% {
-    clip-path: inset(58% 0 25% 0);
-  }
-  80% {
-    clip-path: inset(7% 0 54% 0);
-  }
-  100% {
-    clip-path: inset(43% 0 58% 0);
-  }
+  0%   { clip-path: inset(47% 0 82% 0); }
+  10%  { clip-path: inset(51% 0 6% 0); }
+  20%  { clip-path: inset(33% 0 9% 0); }
+  30%  { clip-path: inset(52% 0 80% 0); }
+  40%  { clip-path: inset(96% 0 40% 0); }
+  50%  { clip-path: inset(90% 0 13% 0); }
+  60%  { clip-path: inset(56% 0 70% 0); }
+  70%  { clip-path: inset(68% 0 49% 0); }
+  80%  { clip-path: inset(92% 0 1% 0); }
+  90%  { clip-path: inset(16% 0 76% 0); }
+  100% { clip-path: inset(62% 0 55% 0); }
 }
 
-/* Responsive adjustments */
+/* Links in info panel: match house style from assisted_self-portrait */
+#info-panel a {
+  color: var(--color-text-muted);
+  text-decoration: none;
+  transition: color var(--transition-speed), text-decoration var(--transition-speed);
+}
+
+#info-panel a:hover {
+  color: var(--color-text);
+  text-decoration: line-through;
+}
+
+/* Mobile responsiveness: reduce icon size and adjust spacing for small screens */
 @media (max-width: 768px) {
-  header a,
-  footer a {
-    font-size: 2rem;
+  :root {
+    --icon-size: 2rem;
   }
 
   #info-panel .inner {
