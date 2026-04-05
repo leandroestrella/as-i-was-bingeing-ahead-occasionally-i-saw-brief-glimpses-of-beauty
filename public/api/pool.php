@@ -5,15 +5,20 @@
  * Builds a pool of ~30 amateur video IDs for the stream.
  *
  * Fetching priority:
- *   1. Invidious API search (free, no key) — primary source
- *   2. YouTube playlist RSS feeds — fallback if all Invidious instances are down
- *   3. Hardcoded FALLBACK_POOL in stream.php — last resort
+ *   1. YouTube Data API v3 (best results, costs quota — 10k units/day free)
+ *   2. Piped API search (free, no key) — fallback when quota exhausted
+ *   3. YouTube playlist RSS feeds — fallback if Piped is also down
+ *   4. Hardcoded FALLBACK_POOL in stream.php — last resort
  *
  * This file is included by stream.php via `include()` and returns an array.
  */
 
 $startTime = microtime(true);
 require_once(__DIR__ . '/perf.php');
+require_once(__DIR__ . '/env.php');
+require_once(__DIR__ . '/quota-tracker.php');
+
+loadEnv();
 
 /**
  * Central configuration for video pool fetching.
@@ -25,16 +30,21 @@ function getConfig() {
     'pool_size' => 30,           // max videos to return per pool refresh
     'max_view_count' => 50000,   // reject videos above this — high views = likely professional
 
+    // YouTube Data API v3 — primary source (requires API key in .env)
+    // Free tier: 10,000 units/day. search.list = 100 units, videos.list = 1 unit.
+    'youtube_api_key' => getenv('YOUTUBE_API_KEY') ?: '',
+
     // Tried in order; first successful response wins.
-    // Check https://docs.invidious.io/instances/ for uptime.
-    'invidious_instances' => [
-      'https://inv.nadeko.net',
-      'https://invidious.io',
-      'https://yt.cdaut.de',
-      'https://invidious.privacydev.net',
-      'https://invidious.garudalinux.org',
-      'https://iv.datura.network',
-      'https://invidious.jing.rocks',
+    // Check https://github.com/TeamPiped/documentation for uptime.
+    // Last verified: 2026-04-05
+    'piped_instances' => [
+      'https://pipedapi.kavin.rocks',
+      'https://pipedapi.adminforge.de',
+      'https://api.piped.yt',
+      'https://pipedapi.drgns.space',
+      'https://piped-api.privacy.com.de',
+      'https://api.piped.private.coffee',
+      'https://pipedapi.darkness.services',
     ],
 
     // One query is picked at random per pool refresh.
@@ -68,9 +78,21 @@ function getConfig() {
     ],
 
     // YouTube playlist IDs for the RSS fallback path.
-    // Add manually verified playlists here — each should contain
-    // actual amateur footage, not curated/commercial content.
-    'playlist_ids' => [],
+    // Each playlist was manually verified for amateur/home-video content.
+    // RSS feeds are free, require no API key, and use YouTube's own infra.
+    // Last verified: 2026-04-05
+    'playlist_ids' => [
+      'PLwqMUQlKzNnr42eO4I5cd9jZeeZ0_tfHQ',
+      'PLwqMUQlKzNnrKCnLw5koOWpV6q-rKDaww',
+      'PLLPmrja_ERqkI6ISdExTJvTZKO9wMuLvf',
+      'PLuja0qET5CWguEI7sS1Q5HjwCYtPQ4BK-',
+      'PL5Juk5amHcUdzNa449391mCktDxlhzDje',
+      'PLuiHi9r3DU42-jFVL7oDNTL4VUORUPYhl',
+      'PLQ6UBcyGN8xI10wdyrKdv-mlr1chPNFkG',
+      'PLYXCN-cYXR2UJ7lTZybCW_zXv9wziR_QM',
+      'PL2a9ajKy0oo8RMOGjficjffdTHUryvwm8',
+      'PLyBheebviAaQqYBuWT2SiF2kW3-ZQeKJz',
+    ],
 
     // Any of these terms in a video title → rejected.
     // Organized by category for easy maintenance.
@@ -112,12 +134,20 @@ function getConfig() {
 // Main execution — called when stream.php includes this file
 // ============================================================================
 
-// Primary: Invidious API
-$pool = fetchFromInvidious();
+// Primary: YouTube Data API v3 (best results, costs quota)
+$pool = fetchFromYouTubeAPI();
+if (!empty($pool)) { $GLOBALS['pool_source'] = 'youtube_api'; }
 
-// Fallback: YouTube playlist RSS (only if Invidious returned nothing)
+// Fallback 1: Piped API (free, no key)
+if (empty($pool)) {
+  $pool = fetchFromPiped();
+  if (!empty($pool)) { $GLOBALS['pool_source'] = 'piped'; }
+}
+
+// Fallback 2: YouTube playlist RSS (free, limited selection)
 if (empty($pool)) {
   $pool = fetchFromPlaylistRSS();
+  if (!empty($pool)) { $GLOBALS['pool_source'] = 'rss'; }
 }
 
 $durationMs = (microtime(true) - $startTime) * 1000;
@@ -137,12 +167,13 @@ return $pool ?: [];
  * or if the view count exceeds the ceiling. Returns true only when all
  * checks pass.
  *
+ * @param array  $config    Config from getConfig() — passed in to avoid
+ *                          rebuilding the array on every call in a filter loop
  * @param string $title     Video title (any case — lowercased internally)
  * @param string $author    Channel name (optional, empty string if unknown)
  * @param int    $viewCount View count (-1 if unknown, skips the check)
  */
-function isVideoAllowed($title, $author = '', $viewCount = -1) {
-  $config = getConfig();
+function isVideoAllowed($config, $title, $author = '', $viewCount = -1) {
   $title = strtolower($title);
   $author = strtolower($author);
 
@@ -160,24 +191,174 @@ function isVideoAllowed($title, $author = '', $viewCount = -1) {
 }
 
 // ============================================================================
-// Invidious (primary source)
+// YouTube Data API v3 (primary source)
 // ============================================================================
 
 /**
- * Search Invidious for amateur videos.
+ * Search YouTube via the official Data API v3.
+ *
+ * Costs 100 quota units per search.list call, plus 1 unit for the
+ * videos.list call that checks embeddable status.
+ *
+ * Returns an array of embeddable video IDs, or empty on failure/quota exhaustion.
+ */
+function fetchFromYouTubeAPI() {
+  $config = getConfig();
+  $apiKey = $config['youtube_api_key'];
+
+  if (empty($apiKey)) {
+    return []; // no key configured — skip to fallback
+  }
+
+  // search.list costs 100 units
+  if (!QuotaTracker::canSpend(101)) { // 100 for search + 1 for videos.list
+    return []; // quota exhausted — skip to fallback
+  }
+
+  $queries = $config['search_queries'];
+  if (empty($queries)) {
+    return [];
+  }
+
+  $query = $queries[array_rand($queries)];
+
+  $url = 'https://www.googleapis.com/youtube/v3/search?'
+    . http_build_query([
+        'part'           => 'snippet',
+        'q'              => $query,
+        'type'           => 'video',
+        'videoDuration'  => 'medium',     // 4-20 minutes
+        'order'          => 'date',       // recent uploads, not SEO-optimized
+        'maxResults'     => 50,           // max allowed per page
+        'videoEmbeddable'=> 'true',       // only embeddable videos
+        'key'            => $apiKey,
+      ]);
+
+  $response = curlGet($url, 8);
+  if ($response === false) {
+    return [];
+  }
+
+  $data = json_decode($response, true);
+  if (!is_array($data) || !isset($data['items']) || empty($data['items'])) {
+    return [];
+  }
+
+  QuotaTracker::spend(100);
+
+  // Filter through title/channel blocklists
+  $candidates = [];
+  foreach ($data['items'] as $item) {
+    $videoId = isset($item['id']['videoId']) ? $item['id']['videoId'] : '';
+    if (!preg_match('/^[a-zA-Z0-9_-]{11}$/', $videoId)) {
+      continue;
+    }
+
+    $title  = isset($item['snippet']['title']) ? $item['snippet']['title'] : '';
+    $author = isset($item['snippet']['channelTitle']) ? $item['snippet']['channelTitle'] : '';
+
+    // View count not available in search results — checked via videos.list below
+    if (isVideoAllowed($config, $title, $author)) {
+      $candidates[] = $videoId;
+    }
+  }
+
+  if (empty($candidates)) {
+    return [];
+  }
+
+  // Batch-check embeddable status and view counts via videos.list (1 unit)
+  $candidates = filterByVideoDetails($candidates, $apiKey, $config['max_view_count']);
+
+  if (empty($candidates)) {
+    return [];
+  }
+
+  shuffle($candidates);
+  return array_slice($candidates, 0, $config['pool_size']);
+}
+
+/**
+ * Use videos.list to check embeddable status and view counts.
+ * Costs 1 quota unit regardless of how many IDs (up to 50).
+ *
+ * @param array  $videoIds     Video IDs to check
+ * @param string $apiKey       YouTube API key
+ * @param int    $maxViewCount Reject videos above this view count
+ * @return array Filtered video IDs that are embeddable and under the view cap
+ */
+function filterByVideoDetails($videoIds, $apiKey, $maxViewCount) {
+  if (empty($videoIds)) {
+    return [];
+  }
+
+  if (!QuotaTracker::canSpend(1)) {
+    return $videoIds; // can't afford the check — return unfiltered
+  }
+
+  $url = 'https://www.googleapis.com/youtube/v3/videos?'
+    . http_build_query([
+        'part' => 'status,statistics',
+        'id'   => implode(',', array_slice($videoIds, 0, 50)),
+        'key'  => $apiKey,
+      ]);
+
+  $response = curlGet($url, 8);
+  if ($response === false) {
+    return $videoIds; // API error — return unfiltered rather than empty
+  }
+
+  $data = json_decode($response, true);
+  if (!is_array($data) || !isset($data['items'])) {
+    return $videoIds;
+  }
+
+  QuotaTracker::spend(1);
+
+  $filtered = [];
+  foreach ($data['items'] as $item) {
+    $id = isset($item['id']) ? $item['id'] : '';
+    if (!preg_match('/^[a-zA-Z0-9_-]{11}$/', $id)) {
+      continue;
+    }
+
+    // Check embeddable
+    $embeddable = isset($item['status']['embeddable']) ? $item['status']['embeddable'] : false;
+    if (!$embeddable) {
+      continue;
+    }
+
+    // Check view count ceiling
+    $viewCount = isset($item['statistics']['viewCount']) ? intval($item['statistics']['viewCount']) : -1;
+    if ($viewCount >= 0 && $viewCount > $maxViewCount) {
+      continue;
+    }
+
+    $filtered[] = $id;
+  }
+
+  return $filtered;
+}
+
+// ============================================================================
+// Piped (fallback)
+// ============================================================================
+
+/**
+ * Search Piped for amateur videos.
+ * Used as fallback when YouTube API quota is exhausted or key is missing.
+ *
+ * Replaces the old Invidious integration — Invidious disabled its API
+ * network-wide in early 2026. Piped instances remain active.
  *
  * Strategy:
  * - Pick one random query from the config (variety across refreshes)
- * - Sort by upload_date instead of relevance — relevance surfaces
- *   SEO-optimized professional content; upload_date surfaces genuine
- *   recent personal uploads
- * - Randomize page 1-5 so repeated queries still yield different results
- * - duration=medium (4-20 min) fits the slot duration range
- * - Try each instance in order; first success wins
+ * - Try each Piped instance in order; first success wins
+ * - Filter results through title/channel/viewCount checks
  */
-function fetchFromInvidious() {
+function fetchFromPiped() {
   $config = getConfig();
-  $instances = $config['invidious_instances'];
+  $instances = $config['piped_instances'];
   $queries = $config['search_queries'];
 
   if (empty($queries)) {
@@ -185,12 +366,10 @@ function fetchFromInvidious() {
   }
 
   $query = $queries[array_rand($queries)];
-  $page = rand(1, 5);
 
   foreach ($instances as $instance) {
     try {
-      $url = $instance . '/api/v1/search?q=' . urlencode($query)
-        . '&type=video&duration=medium&sort_by=upload_date&page=' . intval($page);
+      $url = $instance . '/search?q=' . urlencode($query) . '&filter=videos';
 
       $response = curlGet($url, 5);
       if ($response === false) {
@@ -198,29 +377,30 @@ function fetchFromInvidious() {
       }
 
       $data = json_decode($response, true);
-      if (!is_array($data) || empty($data)) {
+      if (!is_array($data) || !isset($data['items']) || empty($data['items'])) {
         continue; // malformed or empty response
       }
 
       // Filter results through title/channel/viewCount checks
       $videos = [];
-      foreach ($data as $item) {
-        if (!isset($item['videoId']) || !is_string($item['videoId']) || empty($item['videoId'])) {
+      foreach ($data['items'] as $item) {
+        // Piped returns url like "/watch?v=VIDEO_ID"
+        $videoUrl = isset($item['url']) ? $item['url'] : '';
+        if (empty($videoUrl) || !preg_match('/[?&]v=([a-zA-Z0-9_-]{11})/', $videoUrl, $matches)) {
           continue;
         }
+        $videoId = $matches[1];
 
         $title = isset($item['title']) ? $item['title'] : '';
-        $author = isset($item['author']) ? $item['author'] : '';
-        $viewCount = isset($item['viewCount']) ? intval($item['viewCount']) : -1;
+        $author = isset($item['uploaderName']) ? $item['uploaderName'] : '';
+        $viewCount = isset($item['views']) ? intval($item['views']) : -1;
 
-        if (isVideoAllowed($title, $author, $viewCount)) {
-          $videos[] = $item['videoId'];
+        if (isVideoAllowed($config, $title, $author, $viewCount)) {
+          $videos[] = $videoId;
         }
       }
 
       if (!empty($videos)) {
-        // Shuffle before slicing so the pool isn't biased toward
-        // whichever videos Invidious returns first
         shuffle($videos);
         return array_slice($videos, 0, $config['pool_size']);
       }
@@ -238,7 +418,7 @@ function fetchFromInvidious() {
 
 /**
  * Fetch videos from YouTube playlist RSS feeds.
- * Only used when all Invidious instances fail.
+ * Only used when YouTube API and Piped both fail.
  * Playlist IDs must be manually curated in getConfig().
  */
 function fetchFromPlaylistRSS() {
@@ -260,7 +440,7 @@ function fetchFromPlaylistRSS() {
         continue;
       }
 
-      $videos = parseYouTubeRSS($response);
+      $videos = parseYouTubeRSS($config, $response);
       if (!empty($videos)) {
         $allVideos = array_merge($allVideos, $videos);
       }
@@ -280,10 +460,10 @@ function fetchFromPlaylistRSS() {
 
 /**
  * Parse a YouTube RSS feed XML string into an array of video IDs.
- * Applies the same title filter used for Invidious results, but without
+ * Applies the same title filter used for other sources, but without
  * author or viewCount data (RSS doesn't provide those fields).
  */
-function parseYouTubeRSS($xml) {
+function parseYouTubeRSS($config, $xml) {
   if (empty($xml)) {
     return [];
   }
@@ -299,9 +479,10 @@ function parseYouTubeRSS($xml) {
     }
 
     $xpath = new DOMXPath($dom);
-    $xpath->registerNamespace('yt', 'http://www.youtube.com/xml/schemas/2015/12/search.xsd');
+    $xpath->registerNamespace('atom', 'http://www.w3.org/2005/Atom');
+    $xpath->registerNamespace('yt', 'http://www.youtube.com/xml/schemas/2015');
 
-    $nodeList = $xpath->query('//entry');
+    $nodeList = $xpath->query('//atom:entry');
     if ($nodeList === false) {
       return [];
     }
@@ -313,15 +494,15 @@ function parseYouTubeRSS($xml) {
       }
       $videoId = trim($videoIdNodes->item(0)->textContent);
 
-      // YouTube video IDs are always 11 alphanumeric characters
-      if (empty($videoId) || strlen($videoId) !== 11 || !ctype_alnum($videoId)) {
+      // YouTube video IDs are 11 base64url characters (alphanumeric, -, _)
+      if (empty($videoId) || !preg_match('/^[a-zA-Z0-9_-]{11}$/', $videoId)) {
         continue;
       }
 
-      $titleNodes = $xpath->query('.//title', $entry);
+      $titleNodes = $xpath->query('.//atom:title', $entry);
       $title = $titleNodes->length > 0 ? strtolower(trim($titleNodes->item(0)->textContent)) : '';
 
-      if (isVideoAllowed($title)) {
+      if (isVideoAllowed($config, $title)) {
         $videos[] = $videoId;
       }
     }

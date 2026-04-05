@@ -3,7 +3,7 @@
  * Stream State Manager
  *
  * The single source of truth for what every visitor sees right now.
- * Returns JSON: { videoId, startedAt, slotDuration }
+ * Returns JSON: { videoId, startedAt, slotDuration, poolSource }
  *
  * On each request:
  *   1. Acquire file lock (prevents race conditions from concurrent clients)
@@ -24,8 +24,9 @@ define('STATE_FILE', __DIR__ . '/state.json');
 define('LOCK_FILE', __DIR__ . '/state.lock');
 define('SLOT_MIN', 10);              // minimum slot duration (seconds)
 define('SLOT_MAX', 120);             // maximum slot duration (seconds)
-define('POOL_CACHE_VERSION', '3');   // increment to force a fresh pool fetch
-define('POOL_CACHE_TTL', 1800);      // cache lifetime in seconds (30 min)
+define('POOL_CACHE_VERSION', '4');       // increment to force a fresh pool fetch
+define('POOL_CACHE_TTL', 1800);          // cache lifetime in seconds (30 min)
+define('POOL_CACHE_TTL_FAILURE', 300);   // shorter TTL when serving fallback (5 min)
 
 // --- Rate limiting -----------------------------------------------------------
 
@@ -49,12 +50,13 @@ $startTime = microtime(true);
 require_once(__DIR__ . '/perf.php');
 
 // --- Fallback pool -----------------------------------------------------------
-// Used only when both Invidious and YouTube RSS fail.
+// Used only when YouTube API, Piped, and RSS all fail.
 // Each video was manually verified for embeddability and amateur aesthetic.
 // To add more: search YouTube for IMG_0001/VID_20230/etc., test embed at
 // https://www.youtube.com/embed/VIDEO_ID, then add the ID here.
 
 const FALLBACK_POOL = [
+  // === Original pool (manually verified) ===
   'jNQXAC9IVRw',  // Me at the zoo — first YouTube video, genuinely amateur
   'O9NVK12Udj4',  // MOV_0001 — untitled amateur upload, 388s
   'N-B6I9HgA-4',  // IMG_0002.mp4 — untitled amateur upload, 157s
@@ -68,8 +70,50 @@ const FALLBACK_POOL = [
   'GaaMh42NasM',  // daily commute to work in LA, 327s
   'Ruy_KuILcf0',  // morning dog walk, UK POV, 671s
   'r066gsM2mWU',  // 1970 Rainey family home video, 813s
-  'Sor6pDozLiY',  // kids garden, 442s
   '_4NeWUWWoCk',  // early morning walk in Troyes, France, 276s
+  // === Italian street footage ===
+  '3J5eBZ1eZp8',  // joniuA
+  '8Qk3V5lQEgo',  // deCarloFence
+  'WnGm1ulheH4',  // sagraCroceRossa
+  'LCekcF41R60',  // taorminaGlitchFS
+  'Kj2upCRXPVI',  // catodicoRiposto
+  'YIk0eKOrYEs',  // busteFaenzaFS
+  '2IIjnyGT0EY',  // 03 Mercatale
+  'hL_7p_CkooI',  // 05 Sanzio
+  's2taiRr8Vl0',  // 06 Ducale
+  'LsoLmD3gFKw',  // 08 Repubblica
+  'sA9nuZFGhOw',  // 10 Raffaello
+  // === Travel / vacation footage ===
+  'ycmOU6p8ozk',  // Invergarry Culloden and Inverness 2024
+  'sNdPFqfEeyg',  // Edinburgh 2024
+  'iSek6GZpKJ4',  // Yellowstone Videos 2024
+  'XF64OZahV-Q',  // Yellowstone and Grand Tetons 2024
+  // === Default camera filenames (IMG/MOV/DSCF) ===
+  'bu-zyEG_3Lw',  // IMG_0554
+  'qhpr9kCwy84',  // IMG 2081
+  'Awb4WOkYiYY',  // IMG_1106.MOV
+  'dhg9wHnzt0I',  // IMG 1935
+  'SI6Zped0odc',  // IMG_0000
+  'X4nUbe-ql8o',  // IMG_0000.mov
+  'A7t0VXUboeU',  // IMG_0001.mp4
+  'HrFTg0ZOvqE',  // IMG_0
+  '-R8QsuY0Noc',  // Img_
+  'oIDYbT2yYis',  // IMG 0612
+  'o_aryrAb8zA',  // IMG_
+  'NQUxOpRcSUE',  // IMG_4569
+  'mHvb4d66S4w',  // IMG_8910
+  'GFbdUrMw82o',  // IMG_ 228.MOV
+  'pAdjKt4tkzY',  // 3 464 MOV
+  'lzgkA0TYClQ',  // DSCF0001
+  'OLmg8bRrAUs',  // IMG_6,,,.AVI
+  // === Domestic / mundane moments ===
+  'BlxJDFl21po',  // Zebra finch playing with hair tie
+  'b9UO9tn4MpI',  // Listening radio with grass
+  'ByKmsHdhra8',  // How to Fold
+  // === Multilingual amateur footage ===
+  'E6W-KsL_5qo',  // 白沙屯媽祖：松山車站：IMG_3014
+  'sar4MONgTXg',  // 白沙屯媽祖：竹南車站：IMG_3029
+  '-2Jke10WmHw',  // 白沙屯媽祖：粉紅超跑體驗一晚
 ];
 
 // --- Main request handling ---------------------------------------------------
@@ -104,7 +148,7 @@ if ($lockHandle && flock($lockHandle, LOCK_EX)) {
       }
     }
 
-    echo json_encode($state);
+    echo json_encode(withPoolSource($state));
 
   } finally {
     flock($lockHandle, LOCK_UN);
@@ -113,7 +157,7 @@ if ($lockHandle && flock($lockHandle, LOCK_EX)) {
 } else {
   // If we can't acquire the lock (high concurrency), serve stale state
   // rather than blocking. Clients will self-correct on next poll.
-  echo json_encode(readState());
+  echo json_encode(withPoolSource(readState()));
 }
 
 $durationMs = round((microtime(true) - $startTime) * 1000);
@@ -132,7 +176,9 @@ function readState() {
   $json = file_get_contents(STATE_FILE);
   $state = json_decode($json, true);
 
-  if (!is_array($state) || !isset($state['videoId'])) {
+  // All three fields are required — missing any one breaks the sync formula
+  if (!is_array($state)
+      || !isset($state['videoId'], $state['startedAt'], $state['slotDuration'])) {
     return initializeState();
   }
 
@@ -159,6 +205,24 @@ function writeState($state) {
   file_put_contents(STATE_FILE, json_encode($state));
 }
 
+/** Append poolSource to the response so the frontend can detect fallback mode. */
+function withPoolSource($state) {
+  // Static cache avoids re-reading the file within the same request
+  static $source = null;
+  if ($source === null) {
+    $source = 'unknown';
+    $poolFile = __DIR__ . '/pool-cache.v' . POOL_CACHE_VERSION . '.json';
+    if (file_exists($poolFile)) {
+      $cached = json_decode(file_get_contents($poolFile), true);
+      if (is_array($cached) && isset($cached['source'])) {
+        $source = $cached['source'];
+      }
+    }
+  }
+  $state['poolSource'] = $source;
+  return $state;
+}
+
 // ============================================================================
 // Pool management
 // ============================================================================
@@ -174,7 +238,9 @@ function getNextVideo() {
 
 /**
  * Get the video pool, using a versioned cache to avoid hitting
- * Invidious on every request. Cache TTL is POOL_CACHE_TTL seconds.
+ * APIs on every request. Cache TTL depends on the source:
+ * live sources get POOL_CACHE_TTL, fallback gets POOL_CACHE_TTL_FAILURE
+ * so the system retries sooner when all sources are down.
  * Incrementing POOL_CACHE_VERSION invalidates old caches.
  */
 function getPool() {
@@ -183,11 +249,19 @@ function getPool() {
   // Serve from cache if fresh
   if (file_exists($poolFile)) {
     $mtime = filemtime($poolFile);
-    if ($mtime && (time() - $mtime) < POOL_CACHE_TTL) {
+    if ($mtime) {
       $json = file_get_contents($poolFile);
-      $pool = json_decode($json, true);
-      if (is_array($pool) && count($pool) > 0) {
-        return $pool;
+      $cached = json_decode($json, true);
+
+      if (is_array($cached)) {
+        // Support both old format (bare array) and new format (object with metadata)
+        $pool = isset($cached['pool']) ? $cached['pool'] : $cached;
+        $source = isset($cached['source']) ? $cached['source'] : 'unknown';
+        $ttl = ($source === 'fallback') ? POOL_CACHE_TTL_FAILURE : POOL_CACHE_TTL;
+
+        if ((time() - $mtime) < $ttl && is_array($pool) && count($pool) > 0) {
+          return $pool;
+        }
       }
     }
   }
@@ -199,12 +273,16 @@ function getPool() {
     $pool = [];
   }
 
+  $source = isset($GLOBALS['pool_source']) ? $GLOBALS['pool_source'] : 'unknown';
+
   if (!is_array($pool) || count($pool) === 0) {
     $pool = FALLBACK_POOL;
+    $source = 'fallback';
   }
 
   if (is_array($pool) && count($pool) > 0) {
-    file_put_contents($poolFile, json_encode($pool));
+    $cacheData = ['pool' => $pool, 'source' => $source];
+    file_put_contents($poolFile, json_encode($cacheData));
     cleanupOldCacheFiles($poolFile);
   }
 

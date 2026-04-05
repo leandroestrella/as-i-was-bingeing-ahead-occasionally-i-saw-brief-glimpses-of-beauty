@@ -4,7 +4,7 @@ a synchronized global video stream artwork inspired by jonas mekas' [5-hour home
 
 ## how it works?
 
-the server picks a random amateur video every 5 minutes from a pool of ~30 candidates fetched via the invidious api. every client polls the server every 30 seconds and computes the same playback offset from a shared utc timestamp — no websockets, no firebase, no api keys at runtime.
+the server picks a random amateur video every 10–120 seconds from a pool of ~30 candidates fetched via the youtube data api or piped api. every client polls the server every 30 seconds and computes the same playback offset from a shared utc timestamp — no websockets, no firebase.
 
 ```
 offset = (Date.now() - startedAt) / 1000
@@ -30,12 +30,14 @@ flowchart TD
     K --> C
     L --> C
 
-    M[POOL.PHP] --> N{INVIDIOUS API}
+    M[POOL.PHP] --> N{YOUTUBE API}
     N -- SUCCESS --> O[FILTER BY TITLE / VIEWS / CHANNEL]
-    N -- FAIL --> P{YOUTUBE RSS FALLBACK}
+    N -- FAIL --> N2{PIPED API}
+    N2 -- SUCCESS --> O
+    N2 -- FAIL --> P{YOUTUBE RSS FALLBACK}
+    P -- SUCCESS --> O
     P -- FAIL --> Q[HARDCODED FALLBACK POOL]
     O --> R[CACHE POOL FOR 30 MIN]
-    P -- SUCCESS --> O
     Q --> R
 ```
 
@@ -46,7 +48,7 @@ videos are sourced using the [img_0001 approach](https://walzr.com/IMG_0001) —
 - **title blocklist** — 50+ terms across music, education, gaming, commercial, news, fitness, tech, and ambient categories
 - **channel blocklist** — filters professional/corporate channel names (news, media, official, studios, etc.)
 - **view count ceiling** — excludes videos with >50,000 views to favor genuine amateur content
-- **invidious api** — `sort_by=upload_date`, `duration=medium`, pages 1-5 randomized
+- **piped api** — search endpoint with `filter=videos`, tries multiple instances in order
 
 all filters and thresholds are centralized in `pool.php → getConfig()` for easy tuning.
 
@@ -59,7 +61,9 @@ public/
 ├── js/app.js               # youtube iframe + stream polling
 └── api/
     ├── stream.php           # state manager (file-locked, rate-limited)
-    ├── pool.php             # video fetcher (invidious + rss + filters)
+    ├── pool.php             # video fetcher (youtube api + piped + rss + filters)
+    ├── env.php              # .env loader (no composer dependency)
+    ├── quota-tracker.php    # youtube api daily quota counter
     ├── utils.php            # shared utilities (ip detection)
     ├── perf.php             # performance logging
     ├── rate-limit.php       # ip-based rate limiting
@@ -84,19 +88,19 @@ all tunable values live in two files:
 
 | setting | file | default |
 |---|---|---|
-| slot duration | `stream.php` → `SLOT_DURATION` | 300s (5 min) |
-| cache version | `stream.php` → `POOL_CACHE_VERSION` | `'3'` |
+| slot duration | `stream.php` → `SLOT_MIN` / `SLOT_MAX` | 10–120s |
+| cache version | `stream.php` → `POOL_CACHE_VERSION` | `'4'` |
 | rate limit | `stream.php` → `RateLimiter::configure()` | 100 req/min/ip |
 | pool size | `pool.php` → `getConfig()` → `pool_size` | 30 videos |
 | view count ceiling | `pool.php` → `getConfig()` → `max_view_count` | 50,000 |
 | search queries | `pool.php` → `getConfig()` → `search_queries` | ~45 queries |
 | title blocklist | `pool.php` → `getConfig()` → `title_blocklist` | 50+ terms |
 | channel blocklist | `pool.php` → `getConfig()` → `channel_blocklist` | 8 terms |
-| invidious instances | `pool.php` → `getConfig()` → `invidious_instances` | 7 instances |
+| piped instances | `pool.php` → `getConfig()` → `piped_instances` | 7 instances |
 
 ## technical notes
 
-- **zero youtube api quotas** — invidious api, youtube rss feeds, and youtube iframe player api are all free
+- **minimal youtube api quotas** — youtube data api v3 is primary (10k units/day free), piped api and rss feeds as free fallbacks
 - **file-locked state** — `flock()` prevents race conditions on `state.json` under concurrent requests
 - **rate-limited** — ip-based request limiting with file locking to prevent toctou races
 - **clock skew** — utc timestamps; typical skew < 1s across devices, acceptable for an art piece
@@ -119,7 +123,7 @@ npm test
 | problem | fix |
 |---|---|
 | `stream.php` returns error | ensure `public/api/` is writable (755 for dirs, 644 for files) |
-| only fallback videos | invidious instances may be down; check `logs/perf.log` |
+| only fallback videos | youtube api key may be invalid or piped instances down; check `logs/perf.log` and browser console |
 | videos not syncing | verify `api/stream.php` returns json; check browser console |
 
 ## license

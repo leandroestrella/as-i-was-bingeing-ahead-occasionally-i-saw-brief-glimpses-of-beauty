@@ -19,27 +19,33 @@ class StreamPhpTest extends TestCase
 
     // Must match public/api/stream.php FALLBACK_POOL
     const FALLBACK_POOL = [
-        'jNQXAC9IVRw',  // Me at the zoo
-        'O9NVK12Udj4',  // MOV_0001
-        'N-B6I9HgA-4',  // IMG_0002.mp4
-        'N4shgVitgxU',  // MOV_0001.mp4
-        'DjhGJIBUYWQ',  // IMG_0002
-        'PdH25sGIlkM',  // MOV_0001.mp4
-        '_JCtlXFmXk4',  // MOV_0001.wmv
-        '5lEiSSPxqXE',  // MOV_0001.mp4
-        'ryhc8_HxwVM',  // IMG_0002.mp4
-        'LKRvZ9rZEbA',  // IMG_0001.avi
-        'GaaMh42NasM',  // daily commute LA
-        'Ruy_KuILcf0',  // morning dog walk UK
-        'r066gsM2mWU',  // 1970 family home video
-        'Sor6pDozLiY',  // kids garden
-        '_4NeWUWWoCk',  // morning walk Troyes
+        // Original pool
+        'jNQXAC9IVRw', 'O9NVK12Udj4', 'N-B6I9HgA-4', 'N4shgVitgxU',
+        'DjhGJIBUYWQ', 'PdH25sGIlkM', '_JCtlXFmXk4', '5lEiSSPxqXE',
+        'ryhc8_HxwVM', 'LKRvZ9rZEbA', 'GaaMh42NasM', 'Ruy_KuILcf0',
+        'r066gsM2mWU', '_4NeWUWWoCk',
+        // Italian street footage
+        '3J5eBZ1eZp8', '8Qk3V5lQEgo', 'WnGm1ulheH4', 'LCekcF41R60',
+        'Kj2upCRXPVI', 'YIk0eKOrYEs', '2IIjnyGT0EY', 'hL_7p_CkooI',
+        's2taiRr8Vl0', 'LsoLmD3gFKw', 'sA9nuZFGhOw',
+        // Travel / vacation footage
+        'ycmOU6p8ozk', 'sNdPFqfEeyg', 'iSek6GZpKJ4', 'XF64OZahV-Q',
+        // Default camera filenames
+        'bu-zyEG_3Lw', 'qhpr9kCwy84', 'Awb4WOkYiYY', 'dhg9wHnzt0I',
+        'SI6Zped0odc', 'X4nUbe-ql8o', 'A7t0VXUboeU', 'HrFTg0ZOvqE',
+        '-R8QsuY0Noc', 'oIDYbT2yYis', 'o_aryrAb8zA', 'NQUxOpRcSUE',
+        'mHvb4d66S4w', 'GFbdUrMw82o', 'pAdjKt4tkzY', 'lzgkA0TYClQ',
+        'OLmg8bRrAUs',
+        // Domestic / mundane moments
+        'BlxJDFl21po', 'b9UO9tn4MpI', 'ByKmsHdhra8',
+        // Multilingual amateur footage
+        'E6W-KsL_5qo', 'sar4MONgTXg', '-2Jke10WmHw',
     ];
 
     // Must match stream.php SLOT_MIN / SLOT_MAX
     const SLOT_MIN = 10;
     const SLOT_MAX = 120;
-    const POOL_CACHE_VERSION = '3';
+    const POOL_CACHE_VERSION = '4';
 
     protected function setUp(): void
     {
@@ -160,7 +166,11 @@ class StreamPhpTest extends TestCase
     {
         foreach (self::FALLBACK_POOL as $videoId) {
             $this->assertIsString($videoId);
-            $this->assertEquals(11, strlen($videoId), "Invalid video ID length: $videoId");
+            $this->assertMatchesRegularExpression(
+                '/^[a-zA-Z0-9_-]{11}$/',
+                $videoId,
+                "Invalid video ID: $videoId"
+            );
         }
     }
 
@@ -213,6 +223,35 @@ class StreamPhpTest extends TestCase
     {
         $expectedFile = TEST_TMP_DIR . '/pool-cache.v' . self::POOL_CACHE_VERSION . '.json';
         $this->assertEquals($this->tmpPoolCacheFile, $expectedFile);
+    }
+
+    public function testCacheFormatIncludesSourceMetadata()
+    {
+        $cacheData = [
+            'pool' => ['dQw4w9WgXcQ', 'jNQXAC9IVRw'],
+            'source' => 'piped',
+        ];
+
+        file_put_contents($this->tmpPoolCacheFile, json_encode($cacheData));
+        $cached = json_decode(file_get_contents($this->tmpPoolCacheFile), true);
+
+        $this->assertArrayHasKey('pool', $cached);
+        $this->assertArrayHasKey('source', $cached);
+        $this->assertIsArray($cached['pool']);
+        $this->assertContains($cached['source'], ['youtube_api', 'piped', 'rss', 'fallback', 'unknown']);
+    }
+
+    public function testFallbackCacheUsesSourceFallback()
+    {
+        $cacheData = [
+            'pool' => self::FALLBACK_POOL,
+            'source' => 'fallback',
+        ];
+
+        file_put_contents($this->tmpPoolCacheFile, json_encode($cacheData));
+        $cached = json_decode(file_get_contents($this->tmpPoolCacheFile), true);
+
+        $this->assertEquals('fallback', $cached['source']);
     }
 
     // =========================================================================

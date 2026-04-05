@@ -101,22 +101,28 @@
   // ===========================================================================
 
   /**
-   * Poll the server for the current stream state.
-   * On failure, do nothing — the player keeps playing the current video
-   * and will re-sync on the next successful poll.
+   * Fetch a stream endpoint, parse JSON, sync player, and update the UI.
+   * Shared by both regular polling and skip requests.
    */
-  function fetchState() {
-    fetch('api/stream.php', { signal: AbortSignal.timeout(API_TIMEOUT) })
+  function fetchAndSync(url, errorLabel) {
+    fetch(url, { signal: AbortSignal.timeout(API_TIMEOUT) })
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.json();
       })
       .then((state) => {
         syncToState(state);
+        updateStreamStateDisplay(state);
+        warnIfFallback(state);
       })
       .catch((error) => {
-        console.warn('[stream sync error]', error.message);
+        console.warn(`[${errorLabel}]`, error.message);
       });
+  }
+
+  /** Poll the server for the current stream state. */
+  function fetchState() {
+    fetchAndSync('api/stream.php', 'stream sync error');
   }
 
   /**
@@ -192,17 +198,44 @@
 
   /** Ask the server to advance to the next video via ?skip=1. */
   function skipToNextVideo() {
-    fetch('api/stream.php?skip=1', { signal: AbortSignal.timeout(API_TIMEOUT) })
-      .then((response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.json();
-      })
-      .then((state) => {
-        syncToState(state);
-      })
-      .catch((error) => {
-        console.warn('[skip error]', error.message);
-      });
+    fetchAndSync('api/stream.php?skip=1', 'skip error');
+  }
+
+  // ===========================================================================
+  // Stream state display
+  // ===========================================================================
+
+  /** Show the current stream state in the info panel as a diary-style note. */
+  function updateStreamStateDisplay(state) {
+    const el = document.getElementById('stream-state');
+    if (!el || !state) return;
+
+    const elapsed = Math.floor((Date.now() - state.startedAt) / 1000);
+    const link = `https://youtu.be/${state.videoId}`;
+
+    el.innerHTML =
+      `currently watching <a href="${link}" target="_blank" rel="noopener">${state.videoId}</a><br>`
+      + `this fragment lasts ${state.slotDuration} seconds.<br>`
+      + `${elapsed} seconds have passed.`;
+  }
+
+  // ===========================================================================
+  // Pool source warning
+  // ===========================================================================
+
+  let fallbackWarned = false;
+
+  /** Log a console warning once when the pool is serving from the hardcoded fallback. */
+  function warnIfFallback(state) {
+    if (fallbackWarned || !state || !state.poolSource) return;
+    if (state.poolSource === 'fallback') {
+      console.warn(
+        '[bingeing-ahead] Pool is serving from hardcoded fallback. '
+        + 'All external sources failed (YouTube API, Piped, RSS). '
+        + 'Check your YOUTUBE_API_KEY in .env and verify Piped instance availability.'
+      );
+      fallbackWarned = true;
+    }
   }
 
   // ===========================================================================

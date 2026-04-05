@@ -3,7 +3,7 @@
  * Performance Monitoring
  *
  * Logs API call durations and total request times to logs/perf.log.
- * Useful for identifying slow or failing Invidious instances.
+ * Useful for identifying slow or failing Piped/API instances.
  *
  * Log format:
  *   [2026-04-03 14:35:22] API: inv.nadeko.net | 125ms | Status: OK | IP: 1.2.3.4

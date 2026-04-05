@@ -2,6 +2,8 @@
 public/api/state.json
 public/api/state.lock
 public/api/pool-cache*.json   # versioned caches (pool-cache.v3.json etc.)
+public/api/quota-usage.json       # daily YouTube API quota counter
+public/api/quota-usage.json.lock  # lock file for quota tracker
 logs/                          # perf.log, rate-limit.json
 
 # Dependencies (installed locally, not committed)

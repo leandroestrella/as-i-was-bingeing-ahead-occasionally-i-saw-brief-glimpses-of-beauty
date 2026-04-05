@@ -17,14 +17,14 @@ class PoolPhpTest extends TestCase
     const POOL_SIZE = 30;
     const MAX_VIEW_COUNT = 50000;
 
-    const INVIDIOUS_INSTANCES = [
-        'https://inv.nadeko.net',
-        'https://invidious.io',
-        'https://yt.cdaut.de',
-        'https://invidious.privacydev.net',
-        'https://invidious.garudalinux.org',
-        'https://iv.datura.network',
-        'https://invidious.jing.rocks',
+    const PIPED_INSTANCES = [
+        'https://pipedapi.kavin.rocks',
+        'https://pipedapi.adminforge.de',
+        'https://api.piped.yt',
+        'https://pipedapi.drgns.space',
+        'https://piped-api.privacy.com.de',
+        'https://api.piped.private.coffee',
+        'https://pipedapi.darkness.services',
     ];
 
     // =========================================================================
@@ -33,11 +33,13 @@ class PoolPhpTest extends TestCase
 
     public function testValidYoutubeVideoIds()
     {
-        $validIds = ['dQw4w9WgXcQ', 'jNQXAC9IVRw', '9bZkp7q19f0'];
+        // YouTube IDs use base64url: alphanumeric plus - and _
+        $validIds = ['dQw4w9WgXcQ', 'jNQXAC9IVRw', '_JCtlXFmXk4', '-R8QsuY0Noc', 'bu-zyEG_3Lw'];
 
         foreach ($validIds as $id) {
-            $this->assertTrue(
-                strlen($id) === 11 && ctype_alnum($id),
+            $this->assertMatchesRegularExpression(
+                '/^[a-zA-Z0-9_-]{11}$/',
+                $id,
                 "ID '$id' should be valid"
             );
         }
@@ -48,14 +50,13 @@ class PoolPhpTest extends TestCase
         $invalidIds = [
             'dQw4w9WgX',      // Too short
             'dQw4w9WgXcQQ',   // Too long
-            'dQw4w9WgXc!',    // Non-alphanumeric
+            'dQw4w9WgXc!',    // Invalid character
             '',                // Empty
-            null,              // Null
         ];
 
         foreach ($invalidIds as $id) {
-            $isValid = is_string($id) && strlen($id) === 11 && ctype_alnum($id);
-            $this->assertFalse($isValid, "ID should be invalid");
+            $isValid = is_string($id) && preg_match('/^[a-zA-Z0-9_-]{11}$/', $id);
+            $this->assertFalse((bool)$isValid, "ID '$id' should be invalid");
         }
     }
 
@@ -82,18 +83,22 @@ class PoolPhpTest extends TestCase
 
     public function testPoolCacheRoundTrip()
     {
-        $tmpCacheFile = TEST_TMP_DIR . '/pool-cache.v3.json';
-        $pool = ['dQw4w9WgXcQ', 'jNQXAC9IVRw', '9bZkp7q19f0'];
+        $tmpCacheFile = TEST_TMP_DIR . '/pool-cache.v4.json';
+        $cacheData = [
+            'pool' => ['dQw4w9WgXcQ', 'jNQXAC9IVRw', '9bZkp7q19f0'],
+            'source' => 'piped',
+        ];
 
-        file_put_contents($tmpCacheFile, json_encode($pool));
+        file_put_contents($tmpCacheFile, json_encode($cacheData));
         $cached = json_decode(file_get_contents($tmpCacheFile), true);
 
-        $this->assertEquals($pool, $cached);
+        $this->assertEquals($cacheData['pool'], $cached['pool']);
+        $this->assertEquals('piped', $cached['source']);
     }
 
     public function testMalformedCacheGracefullyFails()
     {
-        $tmpCacheFile = TEST_TMP_DIR . '/pool-cache.v3.json';
+        $tmpCacheFile = TEST_TMP_DIR . '/pool-cache.v4.json';
         file_put_contents($tmpCacheFile, '{ invalid json ]');
 
         $decoded = json_decode(file_get_contents($tmpCacheFile), true);
@@ -106,8 +111,9 @@ class PoolPhpTest extends TestCase
 
     public function testCacheFreshnessCheck()
     {
-        $tmpCacheFile = TEST_TMP_DIR . '/pool-cache.v3.json';
-        file_put_contents($tmpCacheFile, json_encode(['dQw4w9WgXcQ']));
+        $tmpCacheFile = TEST_TMP_DIR . '/pool-cache.v4.json';
+        $cacheData = ['pool' => ['dQw4w9WgXcQ'], 'source' => 'piped'];
+        file_put_contents($tmpCacheFile, json_encode($cacheData));
 
         $mtime = filemtime($tmpCacheFile);
         $ageSeconds = time() - $mtime;
@@ -133,14 +139,14 @@ class PoolPhpTest extends TestCase
     // Invidious Instances
     // =========================================================================
 
-    public function testInvidiousInstanceRedundancy()
+    public function testPipedInstanceRedundancy()
     {
-        $this->assertGreaterThanOrEqual(3, count(self::INVIDIOUS_INSTANCES));
+        $this->assertGreaterThanOrEqual(3, count(self::PIPED_INSTANCES));
     }
 
-    public function testInvidiousInstancesAreHttps()
+    public function testPipedInstancesAreHttps()
     {
-        foreach (self::INVIDIOUS_INSTANCES as $url) {
+        foreach (self::PIPED_INSTANCES as $url) {
             $this->assertStringStartsWith('https://', $url);
         }
     }
@@ -170,19 +176,15 @@ class PoolPhpTest extends TestCase
     // Invidious URL Construction
     // =========================================================================
 
-    public function testInvidiousSearchUrlFormat()
+    public function testPipedSearchUrlFormat()
     {
-        $instance = 'https://inv.nadeko.net';
+        $instance = 'https://pipedapi.kavin.rocks';
         $query = 'home video';
-        $page = 3;
 
-        $url = $instance . '/api/v1/search?q=' . urlencode($query)
-            . '&type=video&duration=medium&sort_by=upload_date&page=' . intval($page);
+        $url = $instance . '/search?q=' . urlencode($query) . '&filter=videos';
 
-        $this->assertStringContainsString('/api/v1/search', $url);
-        $this->assertStringContainsString('sort_by=upload_date', $url);
-        $this->assertStringContainsString('duration=medium', $url);
-        $this->assertStringContainsString('page=3', $url);
+        $this->assertStringContainsString('/search', $url);
+        $this->assertStringContainsString('filter=videos', $url);
         $this->assertStringContainsString('q=home+video', $url);
     }
 
