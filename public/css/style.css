@@ -1,4 +1,4 @@
-/* Roboto, self-hosted (LNDR-153): no request to Google's font servers, so no
+/* Roboto, self-hosted: no request to Google's font servers, so no
    visitor IP is shared with Google. Variable files cover weights 100-400;
    latin + latin-ext subsets, same files as leandroestrella.com. */
 @font-face {

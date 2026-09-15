@@ -71,7 +71,7 @@
   function initPlayer() {
     player = new YT.Player('player', {
       // privacy-enhanced mode: youtube-nocookie.com doesn't set YouTube's
-      // tracking cookies for visitors who only watch (LNDR-155)
+      // tracking cookies for visitors who only watch
       host: 'https://www.youtube-nocookie.com',
       playerVars: {
         autoplay: 1,
